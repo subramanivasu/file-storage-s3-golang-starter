@@ -1,10 +1,11 @@
 package main
 
 import (
-	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
@@ -41,21 +42,28 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, "Couldn't parse multipart form", err)
 		return
 	}
-	file, _, err := r.FormFile("thumbnail")
+	file, header, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
 		return
 	}
+	defer file.Close()
 
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Unable to read image data", err)
+	fileExtension:= header.Header.Get("Content-Type")
+	fileExtension=fileExtension[6:]
+	filePath:=filepath.Join(cfg.assetsRoot,videoIDString)
+	filePath=fmt.Sprintf(filePath+".%s",fileExtension)
+	
+	osFile,err:=os.Create(filePath)
+	if err!=nil {
+		respondWithError(w, http.StatusBadRequest, "Unable to create new file", err)
 		return
 	}
-
-	encodedData:=base64.StdEncoding.EncodeToString(fileData)
-	dataUrl:=fmt.Sprintf("data:image/png;base64,%s",encodedData)
-
+	_,err=io.Copy(osFile,file)
+	if err!=nil {
+		respondWithError(w, http.StatusBadRequest, "Unable to copy file contents", err)
+		return
+	}
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to Get Video", err)
@@ -65,8 +73,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
 	}
 
+	thumbnailUrl:=fmt.Sprintf("http://localhost:8091/assets/%s.%s",videoIDString,fileExtension)
 
-	video.ThumbnailURL = &dataUrl
+	video.ThumbnailURL = &thumbnailUrl
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to update video", err)
