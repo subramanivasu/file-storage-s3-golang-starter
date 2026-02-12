@@ -53,7 +53,7 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	mediaType:= header.Header.Get("Content-Type")
 	mediaType,_,err = mime.ParseMediaType(mediaType)
 	if mediaType!="image/png" && mediaType!="image/jpeg"{
-		respondWithError(w,http.StatusBadRequest,"Invalid mime type",err)
+		respondWithError(w,http.StatusBadRequest,"Invalid file type: Should be a png or jpeg",err)
 		return
 	}
 	fileExtension:=mediaType[6:]
