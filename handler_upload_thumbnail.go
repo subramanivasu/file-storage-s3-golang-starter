@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -49,11 +50,16 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	}
 	defer file.Close()
 
-	fileExtension:= header.Header.Get("Content-Type")
-	fileExtension=fileExtension[6:]
+	mediaType:= header.Header.Get("Content-Type")
+	mediaType,_,err = mime.ParseMediaType(mediaType)
+	if mediaType!="image/png" && mediaType!="image/jpeg"{
+		respondWithError(w,http.StatusBadRequest,"Invalid mime type",err)
+		return
+	}
+	fileExtension:=mediaType[6:]
 	filePath:=filepath.Join(cfg.assetsRoot,videoIDString)
 	filePath=fmt.Sprintf(filePath+".%s",fileExtension)
-	
+
 	osFile,err:=os.Create(filePath)
 	if err!=nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to create new file", err)
