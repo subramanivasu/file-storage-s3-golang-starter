@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,18 +41,21 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 		respondWithError(w, http.StatusBadRequest, "Couldn't parse multipart form", err)
 		return
 	}
-	file, header, err := r.FormFile("thumbnail")
+	file, _, err := r.FormFile("thumbnail")
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to parse form file", err)
 		return
 	}
-	mediaType := header.Header.Get("Content-Type")
 
 	fileData, err := io.ReadAll(file)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to read image data", err)
 		return
 	}
+
+	encodedData:=base64.StdEncoding.EncodeToString(fileData)
+	dataUrl:=fmt.Sprintf("data:image/png;base64,%s",encodedData)
+
 	video, err := cfg.db.GetVideo(videoID)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to Get Video", err)
@@ -60,14 +64,9 @@ func (cfg *apiConfig) handlerUploadThumbnail(w http.ResponseWriter, r *http.Requ
 	if userID != video.UserID {
 		respondWithError(w, http.StatusUnauthorized, "Unauthorized", err)
 	}
-	thumbnail := thumbnail{
-		data:      fileData,
-		mediaType: mediaType,
-	}
 
-	videoThumbnails[videoID] = thumbnail
-	thumbnailUrl := fmt.Sprintf("http://localhost:8091/api/thumbnails/%s",videoID)
-	video.ThumbnailURL = &thumbnailUrl
+
+	video.ThumbnailURL = &dataUrl
 	err = cfg.db.UpdateVideo(video)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Unable to update video", err)
