@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"mime"
 	"net/http"
@@ -83,6 +84,27 @@ func getVideoAspectRatio(filePath string) (string, error) {
 	return "", errors.New("no video stream found")
 }
 
+func processVideoForFastStart(filePath string) (string, error) {
+	outPath := fmt.Sprintf("%s.processing", filePath)
+	cmd := exec.Command(
+		"ffmpeg",
+		"-i", filePath,
+		"-c", "copy",
+		"-movflags",
+		"faststart", "-f",
+		"mp4",
+		outPath,
+	)
+
+	if err := cmd.Run(); err != nil {
+		log.Fatalf("Error occured while executing command for faststart")
+		return "", err
+	}
+
+	return outPath, nil
+
+}
+
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
 	videoIDString := r.PathValue("videoID")
 	videoID, err := uuid.Parse(videoIDString)
@@ -144,10 +166,20 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 		respondWithError(w, http.StatusBadRequest, "Error while copying content to temporary file", err)
 		return
 	}
+	processedFilePath, err := processVideoForFastStart(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error while processing video for fast start", err)
+		return
+	}
+	processedFile, err := os.Open(processedFilePath)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error opening the processed video from the file path", err)
+		return
+	}
 
-	tempFile.Seek(0, io.SeekStart)
+	processedFile.Seek(0, io.SeekStart)
 
-	videoType, err := getVideoAspectRatio(tempFile.Name())
+	videoType, err := getVideoAspectRatio(processedFile.Name())
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Error while getting aspect ratio of video", err)
 	}
@@ -164,7 +196,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
 		Key:         &bucketKey,
-		Body:        tempFile,
+		Body:        processedFile,
 		ContentType: &mediaType,
 	})
 
