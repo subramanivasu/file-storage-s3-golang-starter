@@ -1,18 +1,87 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bootdotdev/learn-file-storage-s3-golang-starter/internal/auth"
 	"github.com/google/uuid"
 )
+
+type ffprobeOutput struct {
+	Streams []struct {
+		CodecType string `json:"codec_type"`
+		Width     int    `json:"width"`
+		Height    int    `json:"height"`
+	} `json:"streams"`
+}
+
+func getVideoAspectRatio(filePath string) (string, error) {
+	cmd := exec.Command(
+		"ffprobe",
+		"-v", "error",
+		"-print_format", "json",
+		"-show_streams",
+		filePath,
+	)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf(
+			"ffprobe failed: %v | stderr: %s",
+			err,
+			stderr.String(),
+		)
+	}
+
+	var output ffprobeOutput
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		return "", err
+	}
+
+	for _, stream := range output.Streams {
+		if stream.CodecType == "video" {
+			w := stream.Width
+			h := stream.Height
+
+			if w == 0 || h == 0 {
+				return "", errors.New("invalid video dimensions")
+			}
+
+			ratio := float64(w) / float64(h)
+
+			const tolerance = 0.05
+
+			if math.Abs(ratio-(16.0/9.0)) < tolerance {
+				return "landscape", nil
+			}
+
+			if math.Abs(ratio-(9.0/16.0)) < tolerance {
+				return "portrait", nil
+			}
+
+			return "other", nil
+		}
+	}
+
+	return "", errors.New("no video stream found")
+}
 
 func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request) {
 	videoIDString := r.PathValue("videoID")
@@ -78,6 +147,11 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 
 	tempFile.Seek(0, io.SeekStart)
 
+	videoType, err := getVideoAspectRatio(tempFile.Name())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Error while getting aspect ratio of video", err)
+	}
+
 	randBytes := make([]byte, 32)
 	_, err = rand.Read(randBytes)
 	if err != nil {
@@ -85,7 +159,7 @@ func (cfg *apiConfig) handlerUploadVideo(w http.ResponseWriter, r *http.Request)
 	}
 
 	randId := hex.EncodeToString(randBytes)
-	bucketKey := fmt.Sprintf("%s.mp4", randId)
+	bucketKey := fmt.Sprintf("%s/%s.mp4", videoType, randId)
 
 	cfg.s3Client.PutObject(r.Context(), &s3.PutObjectInput{
 		Bucket:      &cfg.s3Bucket,
